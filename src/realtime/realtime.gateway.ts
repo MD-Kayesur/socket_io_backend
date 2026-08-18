@@ -12,38 +12,25 @@ import { Server, Socket } from "socket.io";
 
 @WebSocketGateway({
   namespace: "/realtime",
-
   cors: {
-    origin:
-      process.env.FRONTEND_URL ||
-      "http://localhost:3000",
-
+    origin: true,
     credentials: true,
   },
 })
 export class RealtimeGateway
-  implements
-    OnGatewayConnection,
-    OnGatewayDisconnect
+  implements OnGatewayConnection, OnGatewayDisconnect
 {
   @WebSocketServer()
   server: Server;
 
   handleConnection(socket: Socket) {
-    console.log(
-      `Socket connected: ${socket.id}`
-    );
+    console.log(`Socket connected: ${socket.id}`);
   }
 
   handleDisconnect(socket: Socket) {
-    console.log(
-      `Socket disconnected: ${socket.id}`
-    );
+    console.log(`Socket disconnected: ${socket.id}`);
   }
 
-  /**
-   * Join personal user room
-   */
   @SubscribeMessage("join-user")
   handleJoinUser(
     @ConnectedSocket() socket: Socket,
@@ -52,56 +39,50 @@ export class RealtimeGateway
       userId: string;
     },
   ) {
+    if (!data?.userId) return;
     const room = `user:${data.userId}`;
-
     socket.join(room);
-
-    console.log(
-      `Socket ${socket.id} joined ${room}`
-    );
+    console.log(`Socket ${socket.id} joined ${room}`);
 
     socket.emit("joined-user", {
       userId: data.userId,
     });
   }
 
-  /**
-   * Send message
-   */
   @SubscribeMessage("sendMessage")
   handleSendMessage(
     @ConnectedSocket() socket: Socket,
     @MessageBody()
     data: {
       senderId: string;
+      senderName?: string;
+      senderAvatar?: string;
       recipientId: string;
       text: string;
     },
   ) {
+    console.log("Gateway received sendMessage:", data);
     const message = {
       id: crypto.randomUUID(),
       senderId: data.senderId,
+      senderName: data.senderName || "User",
+      senderAvatar: data.senderAvatar,
       recipientId: data.recipientId,
       text: data.text,
       timestamp: new Date().toISOString(),
     };
 
-    /**
-     * Send message to recipient.
-     */
+    // Emit to specific recipient room
     this.server
       .to(`user:${data.recipientId}`)
       .emit("receiveMessage", message);
 
-    /**
-     * Send acknowledgement to sender.
-     */
+    console.log(`Emitted receiveMessage to room user:${data.recipientId}`);
+
+    // Send acknowledgement to sender
     socket.emit("messageSent", message);
   }
 
-  /**
-   * Typing event
-   */
   @SubscribeMessage("typing")
   handleTyping(
     @MessageBody()
