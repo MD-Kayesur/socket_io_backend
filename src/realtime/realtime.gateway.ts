@@ -39,10 +39,14 @@ export class RealtimeGateway
       userId: string;
     },
   ) {
+<<<<<<< HEAD
     if (!data?.userId || data.userId === "user-me") {
       console.log(`Socket ${socket.id} blocked from joining: Invalid or guest user`);
       return;
     }
+=======
+    if (!data?.userId) return;
+>>>>>>> 073d705d8c8bb97d9ea2f15541094e64a90a7b55
     const room = `user:${data.userId}`;
     socket.join(room);
     console.log(`Socket ${socket.id} joined ${room}`);
@@ -64,6 +68,7 @@ export class RealtimeGateway
       text: string;
     },
   ) {
+<<<<<<< HEAD
     if (!data?.senderId || data.senderId === "user-me") {
       console.log("Gateway rejected sendMessage: User must create an account first");
       socket.emit("errorMessage", {
@@ -72,6 +77,8 @@ export class RealtimeGateway
       return;
     }
 
+=======
+>>>>>>> 073d705d8c8bb97d9ea2f15541094e64a90a7b55
     console.log("Gateway received sendMessage:", data);
     const message = {
       id: crypto.randomUUID(),
