@@ -116,7 +116,11 @@ export class RealtimeGateway
 
     console.log(`Emitted receiveMessage to room user:${data.recipientId}`);
 
-    // Send acknowledgement to sender
+    // Emit acknowledgement to sender room & socket
+    this.server
+      .to(`user:${data.senderId}`)
+      .emit("messageSent", message);
+
     socket.emit("messageSent", message);
   }
 
