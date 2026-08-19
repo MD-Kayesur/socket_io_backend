@@ -4,6 +4,7 @@ import { RealtimeModule } from "./realtime/realtime.module";
 import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
 import { MessagesModule } from "./messages/messages.module";
+import { GroupsModule } from "./groups/groups.module";
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { MessagesModule } from "./messages/messages.module";
     AuthModule,
     UsersModule,
     MessagesModule,
+    GroupsModule,
   ],
 })
 export class AppModule {}

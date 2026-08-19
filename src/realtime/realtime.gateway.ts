@@ -10,6 +10,7 @@ import {
 
 import { Server, Socket } from "socket.io";
 import { MessagesService } from "../messages/messages.service";
+import { GroupsService } from "../groups/groups.service";
 
 @WebSocketGateway({
   namespace: "/realtime",
@@ -24,7 +25,10 @@ export class RealtimeGateway
   @WebSocketServer()
   server: Server;
 
-  constructor(private readonly messagesService: MessagesService) {}
+  constructor(
+    private readonly messagesService: MessagesService,
+    private readonly groupsService: GroupsService
+  ) {}
 
   handleConnection(socket: Socket) {
     console.log(`Socket connected: ${socket.id}`);
@@ -35,7 +39,7 @@ export class RealtimeGateway
   }
 
   @SubscribeMessage("join-user")
-  handleJoinUser(
+  async handleJoinUser(
     @ConnectedSocket() socket: Socket,
     @MessageBody()
     data: {
@@ -49,6 +53,17 @@ export class RealtimeGateway
     const room = `user:${data.userId}`;
     socket.join(room);
     console.log(`Socket ${socket.id} joined ${room}`);
+
+    // Auto-join all group rooms this user belongs to
+    try {
+      const userGroups = await this.groupsService.getUserGroups(data.userId);
+      for (const group of userGroups) {
+        socket.join(`group:${group.id}`);
+        console.log(`Socket ${socket.id} auto-joined group:${group.id}`);
+      }
+    } catch (err) {
+      console.error("Failed to auto-join user groups:", err.message);
+    }
 
     socket.emit("joined-user", {
       userId: data.userId,
@@ -144,14 +159,23 @@ export class RealtimeGateway
     @MessageBody()
     data: {
       senderId: string;
-      recipientId: string;
+      senderName?: string;
+      recipientId?: string;
+      groupId?: string;
     },
   ) {
-    this.server
-      .to(`user:${data.recipientId}`)
-      .emit("userTyping", {
+    if (data.groupId) {
+      this.server.to(`group:${data.groupId}`).emit("userTyping", {
         senderId: data.senderId,
+        senderName: data.senderName || "Group member",
+        groupId: data.groupId,
       });
+    } else if (data.recipientId) {
+      this.server.to(`user:${data.recipientId}`).emit("userTyping", {
+        senderId: data.senderId,
+        senderName: data.senderName,
+      });
+    }
   }
 
   @SubscribeMessage("deleteMessage")
@@ -186,6 +210,138 @@ export class RealtimeGateway
     } catch (err) {
       console.error("Failed to delete message via gateway:", err.message);
       socket.emit("errorMessage", { message: err.message });
+    }
+  }
+
+  @SubscribeMessage("join-group")
+  handleJoinGroup(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { groupId: string }
+  ) {
+    if (data?.groupId) {
+      const room = `group:${data.groupId}`;
+      socket.join(room);
+      console.log(`Socket ${socket.id} joined group room: ${room}`);
+    }
+  }
+
+  @SubscribeMessage("sendGroupMessage")
+  async handleSendGroupMessage(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      groupId: string;
+      senderId: string;
+      text: string;
+    }
+  ) {
+    if (!data?.groupId || !data?.senderId) return;
+
+    // Verify sender is still a member of the group
+    const isMember = await this.groupsService.isGroupMember(
+      data.groupId,
+      data.senderId
+    );
+    if (!isMember) {
+      socket.emit("removedFromGroup", {
+        groupId: data.groupId,
+        userId: data.senderId,
+      });
+      socket.emit("errorMessage", {
+        message:
+          "You cannot send messages because you were removed from this group.",
+      });
+      return;
+    }
+
+    try {
+      const savedMsg = await this.groupsService.createGroupMessage(
+        data.groupId,
+        data.senderId,
+        data.text
+      );
+
+      const messagePayload = {
+        id: savedMsg.id,
+        groupId: savedMsg.groupId,
+        senderId: savedMsg.senderId,
+        senderName: savedMsg.sender?.name || "User",
+        senderAvatar: savedMsg.sender?.avatar,
+        text: savedMsg.text,
+        timestamp: new Date(savedMsg.createdAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        createdAt: savedMsg.createdAt.toISOString(),
+        status: "delivered",
+        isGroup: true,
+      };
+
+      // 1. Broadcast message to group room
+      this.server
+        .to(`group:${data.groupId}`)
+        .emit("receiveGroupMessage", messagePayload);
+
+      // 2. ALSO send directly to every group member's user room user:${memberId}
+      const groupDetails = await this.groupsService.getGroupById(data.groupId);
+      if (groupDetails?.members) {
+        for (const member of groupDetails.members) {
+          if (member.id !== data.senderId) {
+            this.server
+              .to(`user:${member.id}`)
+              .emit("receiveGroupMessage", messagePayload);
+          }
+        }
+      }
+
+      console.log(
+        `Emitted receiveGroupMessage to group:${data.groupId} and member user rooms`
+      );
+    } catch (err) {
+      console.error("Failed to send group message:", err.message);
+      socket.emit("errorMessage", { message: err.message });
+    }
+  }
+
+  @SubscribeMessage("notifyGroupCreated")
+  async handleNotifyGroupCreated(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      group: any;
+      memberIds: string[];
+    }
+  ) {
+    if (data?.memberIds?.length) {
+      socket.join(`group:${data.group.id}`);
+
+      for (const userId of data.memberIds) {
+        this.server.to(`user:${userId}`).emit("addedToGroup", data.group);
+      }
+    }
+  }
+
+  @SubscribeMessage("notifyMemberRemoved")
+  handleNotifyMemberRemoved(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      groupId: string;
+      userId: string;
+    }
+  ) {
+    if (data?.groupId && data?.userId) {
+      // Send notification to the removed member
+      this.server.to(`user:${data.userId}`).emit("removedFromGroup", {
+        groupId: data.groupId,
+        userId: data.userId,
+      });
+
+      // Notify other group members so their UI refetches/updates
+      this.server.to(`group:${data.groupId}`).emit("memberRemovedFromGroup", {
+        groupId: data.groupId,
+        userId: data.userId,
+      });
     }
   }
 }

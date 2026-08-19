@@ -8,28 +8,59 @@ datasource db {
 }
 
 model User {
-  id               String    @id @default(uuid())
+  id               String        @id @default(uuid())
   name             String
-  email            String    @unique
+  email            String        @unique
   password         String
   avatar           String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-  sentMessages     Message[] @relation("SentMessages")
-  receivedMessages Message[] @relation("ReceivedMessages")
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  sentMessages     Message[]     @relation("SentMessages")
+  receivedMessages Message[]     @relation("ReceivedMessages")
+  createdGroups    Group[]       @relation("CreatedGroups")
+  groupMemberships GroupMember[]
+}
+
+model Group {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  avatar      String?
+  creatorId   String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  creator  User          @relation("CreatedGroups", fields: [creatorId], references: [id], onDelete: Cascade)
+  members  GroupMember[]
+  messages Message[]     @relation("GroupMessages")
+}
+
+model GroupMember {
+  id       String   @id @default(uuid())
+  groupId  String
+  userId   String
+  role     String   @default("member")
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
 }
 
 model Message {
   id                 String   @id @default(uuid())
   senderId           String
-  recipientId        String
+  recipientId        String?
+  groupId            String?
   text               String
   createdAt          DateTime @default(now())
   deletedForEveryone Boolean  @default(false)
   deletedBySender    Boolean  @default(false)
   deletedByRecipient Boolean  @default(false)
 
-  sender    User @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
-  recipient User @relation("ReceivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
+  sender    User   @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User?  @relation("ReceivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
+  group     Group? @relation("GroupMessages", fields: [groupId], references: [id], onDelete: Cascade)
 }
 
