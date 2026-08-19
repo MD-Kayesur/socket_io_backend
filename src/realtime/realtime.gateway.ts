@@ -106,7 +106,7 @@ export class RealtimeGateway
       text: data.text,
       timestamp,
       createdAt: dbMessage?.createdAt || new Date().toISOString(),
-      status: "delivered",
+      status: "sent",
     };
 
     // Emit to specific recipient room
@@ -116,12 +116,27 @@ export class RealtimeGateway
 
     console.log(`Emitted receiveMessage to room user:${data.recipientId}`);
 
-    // Emit acknowledgement to sender room & socket
+    // Emit confirmation to sender room (handles multi-tab sync as well)
     this.server
       .to(`user:${data.senderId}`)
       .emit("messageSent", message);
+  }
 
-    socket.emit("messageSent", message);
+  @SubscribeMessage("markAsRead")
+  handleMarkAsRead(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      messageId?: string;
+      senderId: string;
+      recipientId: string;
+    },
+  ) {
+    this.server.to(`user:${data.senderId}`).emit("messagesRead", {
+      senderId: data.senderId,
+      recipientId: data.recipientId,
+      messageId: data.messageId,
+    });
   }
 
   @SubscribeMessage("typing")
