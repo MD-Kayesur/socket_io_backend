@@ -4,6 +4,7 @@ import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { SignupDto } from "./dto/signup.dto";
 import { LoginDto } from "./dto/login.dto";
+import { GoogleAuthDto } from "./dto/google-auth.dto";
 
 @Injectable()
 export class AuthService {
@@ -62,6 +63,41 @@ export class AuthService {
     const { password, ...result } = user;
     return {
       message: "Logged in successfully",
+      user: result,
+      accessToken: token,
+    };
+  }
+
+  async googleLogin(dto: GoogleAuthDto) {
+    const userEmail = dto.email.toLowerCase();
+    let user = await this.prisma.user.findUnique({
+      where: { email: userEmail },
+    });
+
+    if (user) {
+      if (dto.avatar && !user.avatar) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { avatar: dto.avatar },
+        });
+      }
+    } else {
+      const randomPassword = await bcrypt.hash(`google_${Date.now()}_${Math.random()}`, 10);
+      user = await this.prisma.user.create({
+        data: {
+          name: dto.name || "Google User",
+          email: userEmail,
+          password: randomPassword,
+          avatar: dto.avatar || null,
+        },
+      });
+    }
+
+    const token = this.generateToken(user.id, user.email);
+    const { password, ...result } = user;
+
+    return {
+      message: "Google authentication successful",
       user: result,
       accessToken: token,
     };
