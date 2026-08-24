@@ -344,5 +344,88 @@ export class RealtimeGateway
       });
     }
   }
+
+  // WebRTC Audio & Video Calling Signaling Handlers
+  @SubscribeMessage("callUser")
+  handleCallUser(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      recipientId: string;
+      callerId: string;
+      callerName: string;
+      callerAvatar?: string;
+      signalData: any;
+      callType: "audio" | "video";
+    }
+  ) {
+    if (data?.recipientId) {
+      this.server.to(`user:${data.recipientId}`).emit("incomingCall", {
+        callerId: data.callerId,
+        callerName: data.callerName,
+        callerAvatar: data.callerAvatar,
+        signalData: data.signalData,
+        callType: data.callType,
+      });
+    }
+  }
+
+  @SubscribeMessage("answerCall")
+  handleAnswerCall(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      callerId: string;
+      signalData: any;
+    }
+  ) {
+    if (data?.callerId) {
+      this.server.to(`user:${data.callerId}`).emit("callAccepted", {
+        signalData: data.signalData,
+      });
+    }
+  }
+
+  @SubscribeMessage("rejectCall")
+  handleRejectCall(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      callerId: string;
+    }
+  ) {
+    if (data?.callerId) {
+      this.server.to(`user:${data.callerId}`).emit("callRejected");
+    }
+  }
+
+  @SubscribeMessage("endCall")
+  handleEndCall(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      to: string;
+    }
+  ) {
+    if (data?.to) {
+      this.server.to(`user:${data.to}`).emit("callEnded");
+    }
+  }
+
+  @SubscribeMessage("iceCandidate")
+  handleIceCandidate(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      to: string;
+      candidate: any;
+    }
+  ) {
+    if (data?.to) {
+      this.server.to(`user:${data.to}`).emit("iceCandidate", {
+        candidate: data.candidate,
+      });
+    }
+  }
 }
 
