@@ -25,6 +25,12 @@ export class RealtimeGateway
   @WebSocketServer()
   server: Server;
 
+  // Track active group calls: groupId -> Map of userId -> participant info
+  private activeGroupCalls = new Map<
+    string,
+    Map<string, { id: string; name: string; avatar?: string; socketId: string }>
+  >();
+
   constructor(
     private readonly messagesService: MessagesService,
     private readonly groupsService: GroupsService
@@ -36,6 +42,33 @@ export class RealtimeGateway
 
   handleDisconnect(socket: Socket) {
     console.log(`Socket disconnected: ${socket.id}`);
+
+    // Clean up any group calls this socket was participating in
+    for (const [groupId, callMembers] of this.activeGroupCalls.entries()) {
+      for (const [userId, member] of callMembers.entries()) {
+        if (member.socketId === socket.id) {
+          callMembers.delete(userId);
+          console.log(`Auto-removed disconnected user ${userId} from group call ${groupId}`);
+
+          socket.to(`group-call:${groupId}`).emit("userLeftGroupCall", {
+            groupId,
+            userId,
+          });
+
+          if (callMembers.size === 0) {
+            this.activeGroupCalls.delete(groupId);
+            this.server.to(`group:${groupId}`).emit("groupCallEnded", {
+              groupId,
+            });
+          } else {
+            this.server.to(`group:${groupId}`).emit("groupCallUpdated", {
+              groupId,
+              participantCount: callMembers.size,
+            });
+          }
+        }
+      }
+    }
   }
 
   @SubscribeMessage("join-user")
@@ -425,6 +458,180 @@ export class RealtimeGateway
       this.server.to(`user:${data.to}`).emit("iceCandidate", {
         candidate: data.candidate,
       });
+    }
+  }
+
+  // --- WebRTC Group Calling Signaling Handlers ---
+
+  @SubscribeMessage("startGroupCall")
+  handleStartGroupCall(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      groupId: string;
+      groupName: string;
+      groupAvatar?: string;
+      caller: { id: string; name: string; avatar?: string };
+      callType: "audio" | "video";
+    }
+  ) {
+    if (!data?.groupId || !data?.caller?.id) return;
+
+    const callRoom = `group-call:${data.groupId}`;
+    socket.join(callRoom);
+
+    if (!this.activeGroupCalls.has(data.groupId)) {
+      this.activeGroupCalls.set(data.groupId, new Map());
+    }
+    const callMembers = this.activeGroupCalls.get(data.groupId)!;
+    callMembers.set(data.caller.id, {
+      ...data.caller,
+      socketId: socket.id,
+    });
+
+    console.log(
+      `User ${data.caller.name} (${data.caller.id}) started ${data.callType} call in group ${data.groupId}`
+    );
+
+    // Notify all members of the group chat about the live call
+    this.server.to(`group:${data.groupId}`).emit("groupCallStarted", {
+      groupId: data.groupId,
+      groupName: data.groupName,
+      groupAvatar: data.groupAvatar,
+      caller: data.caller,
+      callType: data.callType,
+      participantCount: callMembers.size,
+    });
+  }
+
+  @SubscribeMessage("joinGroupCall")
+  handleJoinGroupCall(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      groupId: string;
+      user: { id: string; name: string; avatar?: string };
+      callType?: "audio" | "video";
+    }
+  ) {
+    if (!data?.groupId || !data?.user?.id) return;
+
+    const callRoom = `group-call:${data.groupId}`;
+    socket.join(callRoom);
+
+    if (!this.activeGroupCalls.has(data.groupId)) {
+      this.activeGroupCalls.set(data.groupId, new Map());
+    }
+    const callMembers = this.activeGroupCalls.get(data.groupId)!;
+
+    // Get existing participants before adding the new user
+    const existingParticipants = Array.from(callMembers.values()).filter(
+      (p) => p.id !== data.user.id
+    );
+
+    callMembers.set(data.user.id, {
+      ...data.user,
+      socketId: socket.id,
+    });
+
+    console.log(
+      `User ${data.user.name} (${data.user.id}) joined call in group ${data.groupId}. Total in call: ${callMembers.size}`
+    );
+
+    // Send list of existing participants to the newly joined peer so it can create offers
+    socket.emit("groupCallParticipants", {
+      groupId: data.groupId,
+      participants: existingParticipants,
+    });
+
+    // Notify other participants in the call that a new peer joined
+    socket.to(callRoom).emit("userJoinedGroupCall", {
+      groupId: data.groupId,
+      user: data.user,
+      socketId: socket.id,
+    });
+
+    // Update group chat about new participant count
+    this.server.to(`group:${data.groupId}`).emit("groupCallUpdated", {
+      groupId: data.groupId,
+      participantCount: callMembers.size,
+    });
+  }
+
+  @SubscribeMessage("groupCallSignal")
+  handleGroupCallSignal(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      to: string; // Target recipient user ID
+      from: { id: string; name: string; avatar?: string }; // Sender user info
+      signalData: any; // SDP offer/answer or ICE candidate
+      groupId: string;
+    }
+  ) {
+    if (data?.to) {
+      this.server.to(`user:${data.to}`).emit("groupCallSignal", {
+        from: data.from,
+        signalData: data.signalData,
+        groupId: data.groupId,
+      });
+    }
+  }
+
+  @SubscribeMessage("leaveGroupCall")
+  handleLeaveGroupCall(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    data: {
+      groupId: string;
+      userId: string;
+    }
+  ) {
+    if (!data?.groupId || !data?.userId) return;
+
+    const callRoom = `group-call:${data.groupId}`;
+    socket.leave(callRoom);
+
+    const callMembers = this.activeGroupCalls.get(data.groupId);
+    if (callMembers) {
+      callMembers.delete(data.userId);
+      console.log(`User ${data.userId} left call in group ${data.groupId}`);
+
+      // Notify other participants in the call room
+      socket.to(callRoom).emit("userLeftGroupCall", {
+        groupId: data.groupId,
+        userId: data.userId,
+      });
+
+      if (callMembers.size === 0) {
+        this.activeGroupCalls.delete(data.groupId);
+        console.log(`Group call in ${data.groupId} ended (no participants)`);
+        this.server.to(`group:${data.groupId}`).emit("groupCallEnded", {
+          groupId: data.groupId,
+        });
+      } else {
+        this.server.to(`group:${data.groupId}`).emit("groupCallUpdated", {
+          groupId: data.groupId,
+          participantCount: callMembers.size,
+        });
+      }
+    }
+  }
+
+  @SubscribeMessage("checkGroupCall")
+  handleCheckGroupCall(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { groupId: string }
+  ) {
+    if (data?.groupId && this.activeGroupCalls.has(data.groupId)) {
+      const callMembers = this.activeGroupCalls.get(data.groupId)!;
+      if (callMembers.size > 0) {
+        socket.emit("activeGroupCallInfo", {
+          groupId: data.groupId,
+          participantCount: callMembers.size,
+          participants: Array.from(callMembers.values()),
+        });
+      }
     }
   }
 }
