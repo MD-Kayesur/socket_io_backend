@@ -5,8 +5,13 @@ import { AppModule } from "./app.module";
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  const frontendUrl = process.env.FRONTEND_URL;
   app.enableCors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: frontendUrl
+      ? frontendUrl.includes(",")
+        ? frontendUrl.split(",").map((s) => s.trim())
+        : frontendUrl
+      : true,
     credentials: true,
   });
 
@@ -19,10 +24,10 @@ async function bootstrap() {
 
   const port = Number(process.env.PORT) || 8000;
 
-  await app.listen(port);
+  await app.listen(port, "0.0.0.0");
 
-  console.log(`API running on http://localhost:${port}`);
-  console.log(`Socket.IO running on ws://localhost:${port}/realtime`);
+  console.log(`API running on http://0.0.0.0:${port}`);
+  console.log(`Socket.IO running on ws://0.0.0.0:${port}/realtime`);
 }
 
 bootstrap();
