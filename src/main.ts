@@ -5,14 +5,20 @@ import { AppModule } from "./app.module";
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  const frontendUrl = process.env.FRONTEND_URL;
   app.enableCors({
-    origin: frontendUrl
-      ? frontendUrl.includes(",")
-        ? frontendUrl.split(",").map((s) => s.trim())
-        : frontendUrl
-      : true,
+    origin: (origin, callback) => {
+      // Allow any requesting origin dynamically (reflects origin for credentials)
+      callback(null, true);
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+    ],
   });
 
   app.useGlobalPipes(
