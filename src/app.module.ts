@@ -6,6 +6,9 @@ import { UsersModule } from "./users/users.module";
 import { MessagesModule } from "./messages/messages.module";
 import { GroupsModule } from "./groups/groups.module";
 
+import { AppController } from "./app.controller";
+import { AppService } from "./app.service";
+
 @Module({
   imports: [
     PrismaModule,
@@ -15,6 +18,8 @@ import { GroupsModule } from "./groups/groups.module";
     MessagesModule,
     GroupsModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}
 

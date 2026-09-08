@@ -6,7 +6,12 @@ export class AppController {
   constructor(private readonly appService: AppService) {}
 
   @Get()
-  getHello(): string {
-    return this.appService.getHello();
+  getHello() {
+    return {
+      status: "online",
+      message: "NestJS Socket.IO Chat Backend is running successfully!",
+      socketPath: "/realtime",
+      timestamp: new Date().toISOString(),
+    };
   }
 }
