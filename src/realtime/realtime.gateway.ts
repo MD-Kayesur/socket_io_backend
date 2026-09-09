@@ -40,7 +40,7 @@ export class RealtimeGateway
     console.log(`Socket connected: ${socket.id}`);
   }
 
-  handleDisconnect(socket: Socket) {
+  async handleDisconnect(socket: Socket) {
     console.log(`Socket disconnected: ${socket.id}`);
 
     // Clean up any group calls this socket was participating in
@@ -60,6 +60,16 @@ export class RealtimeGateway
             this.server.to(`group:${groupId}`).emit("groupCallEnded", {
               groupId,
             });
+            try {
+              const group = await this.groupsService.getGroupById(groupId);
+              if (group && group.members) {
+                for (const m of group.members) {
+                  this.server.to(`user:${m.id}`).emit("groupCallEnded", { groupId });
+                }
+              }
+            } catch (err) {
+              console.error("Failed to broadcast group call ended on disconnect:", err);
+            }
           } else {
             this.server.to(`group:${groupId}`).emit("groupCallUpdated", {
               groupId,
@@ -464,7 +474,7 @@ export class RealtimeGateway
   // --- WebRTC Group Calling Signaling Handlers ---
 
   @SubscribeMessage("startGroupCall")
-  handleStartGroupCall(
+  async handleStartGroupCall(
     @ConnectedSocket() socket: Socket,
     @MessageBody()
     data: {
@@ -493,15 +503,31 @@ export class RealtimeGateway
       `User ${data.caller.name} (${data.caller.id}) started ${data.callType} call in group ${data.groupId}`
     );
 
-    // Notify all members of the group chat about the live call
-    this.server.to(`group:${data.groupId}`).emit("groupCallStarted", {
+    const callPayload = {
       groupId: data.groupId,
       groupName: data.groupName,
       groupAvatar: data.groupAvatar,
       caller: data.caller,
       callType: data.callType,
       participantCount: callMembers.size,
-    });
+    };
+
+    // Notify all members currently connected to the group chat room
+    this.server.to(`group:${data.groupId}`).emit("groupCallStarted", callPayload);
+
+    // Also broadcast ringing alert directly to each group member's private user room
+    try {
+      const group = await this.groupsService.getGroupById(data.groupId);
+      if (group && group.members) {
+        for (const member of group.members) {
+          if (member.id !== data.caller.id) {
+            this.server.to(`user:${member.id}`).emit("groupCallStarted", callPayload);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to broadcast group call to members:", err);
+    }
   }
 
   @SubscribeMessage("joinGroupCall")
@@ -579,7 +605,7 @@ export class RealtimeGateway
   }
 
   @SubscribeMessage("leaveGroupCall")
-  handleLeaveGroupCall(
+  async handleLeaveGroupCall(
     @ConnectedSocket() socket: Socket,
     @MessageBody()
     data: {
@@ -609,6 +635,18 @@ export class RealtimeGateway
         this.server.to(`group:${data.groupId}`).emit("groupCallEnded", {
           groupId: data.groupId,
         });
+        try {
+          const group = await this.groupsService.getGroupById(data.groupId);
+          if (group && group.members) {
+            for (const member of group.members) {
+              this.server.to(`user:${member.id}`).emit("groupCallEnded", {
+                groupId: data.groupId,
+              });
+            }
+          }
+        } catch (err) {
+          console.error("Failed to broadcast group call ended to members:", err);
+        }
       } else {
         this.server.to(`group:${data.groupId}`).emit("groupCallUpdated", {
           groupId: data.groupId,
